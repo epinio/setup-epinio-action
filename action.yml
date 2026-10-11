@@ -1,0 +1,40 @@
+name: Setup Epinio
+description: Install the Epinio CLI, cache it, add it to PATH, and optionally log in
+author: Epinio
+branding:
+  icon: upload-cloud
+  color: blue
+inputs:
+  version:
+    description: >
+      Epinio CLI version to install. Use "latest", a semver (e.g. "1.14.2" or
+      "v1.14.2"), or "server" to match the version from the Epinio API at `url`.
+    default: latest
+    required: false
+  url:
+    description: Epinio API URL used for login and/or version=server (e.g. https://epinio.example.com)
+    required: false
+  token:
+    description: Bearer access token for Epinio (alternative to user/password)
+    required: false
+  user:
+    description: Epinio username (requires password and url)
+    required: false
+  password:
+    description: Epinio password (requires user and url)
+    required: false
+  namespace:
+    description: Epinio namespace to target after authentication
+    required: false
+  trust-ca:
+    description: >
+      When true, pass --trust-ca to epinio login (user/password auth).
+      Needed for servers with a self-signed or private CA. Default is false.
+    default: "false"
+    required: false
+outputs:
+  version:
+    description: Resolved Epinio CLI version that was installed
+runs:
+  using: node24
+  main: dist/index.js

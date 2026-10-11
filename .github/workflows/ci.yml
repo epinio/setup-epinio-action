@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Ensure dist is committed
+        run: git diff --exit-code -- dist
+
+  smoke:
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Epinio
+        id: setup
+        uses: ./
+        with:
+          version: latest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Verify CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          epinio --version
+          test -n "${{ steps.setup.outputs.version }}"
+          echo "resolved=${{ steps.setup.outputs.version }}"
+
+  token-auth:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Epinio with token auth
+        uses: ./
+        with:
+          version: latest
+          url: https://epinio.example.com
+          token: ci-test-token
+          namespace: workspace
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Verify settings written
+        run: |
+          set -euo pipefail
+          settings="$HOME/.config/epinio/settings.yaml"
+          test -f "$settings"
+          grep -F 'api: "https://epinio.example.com"' "$settings"
+          grep -F 'wss: "wss://epinio.example.com"' "$settings"
+          grep -F 'accesstoken: "ci-test-token"' "$settings"
+          grep -F 'namespace: "workspace"' "$settings"

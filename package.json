@@ -1,0 +1,22 @@
+{
+  "name": "setup-epinio-action",
+  "private": true,
+  "description": "GitHub Action to install and optionally authenticate the Epinio CLI",
+  "scripts": {
+    "build": "ncc build src/main.ts --license LICENSE.txt --out dist",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@actions/core": "^2.0.3",
+    "@actions/exec": "^2.0.0",
+    "@actions/http-client": "^3.0.2",
+    "@actions/tool-cache": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vercel/ncc": "^0.38.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
