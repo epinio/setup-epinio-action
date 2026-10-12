@@ -34433,9 +34433,9 @@ const os = __importStar(__nccwpck_require__(8161));
 const path = __importStar(__nccwpck_require__(6760));
 /**
  * Path used for hand-written token settings. Prefer an existing EPINIO_SETTINGS
- * override; otherwise use a stable runner-local path. Callers must export this
- * path via EPINIO_SETTINGS so the Epinio CLI finds it on macOS/Windows too
- * (those platforms use different XDG-style defaults than Linux).
+ * override; otherwise default to ~/.config/epinio/settings.yaml. Callers must
+ * export this path via EPINIO_SETTINGS so the Epinio CLI finds it on
+ * macOS/Windows too (those platforms use different defaults than Linux).
  */
 function settingsPath() {
     const override = process.env.EPINIO_SETTINGS;
@@ -34592,12 +34592,12 @@ function githubHeaders(githubToken) {
     }
     return headers;
 }
-async function resolveFromGitHub(versionInput, githubToken) {
+async function resolveLatestFromGitHub(githubToken) {
     const client = new http.HttpClient("setup-epinio-action");
     const url = `${RELEASES_API}/latest`;
     const res = await client.getJson(url, githubHeaders(githubToken));
     if (res.statusCode !== 200 || !res.result?.tag_name) {
-        throw new Error(`Failed to resolve Epinio release '${versionInput}' (HTTP ${res.statusCode})`);
+        throw new Error(`Failed to resolve the latest Epinio release (HTTP ${res.statusCode})`);
     }
     return (0, version_1.stripV)(res.result.tag_name);
 }
@@ -34629,7 +34629,7 @@ async function resolveVersion(versionInput, url, trustCA, githubToken) {
     if ((0, version_1.isPinnedSemver)(requested)) {
         return (0, version_1.stripV)(requested);
     }
-    return resolveFromGitHub(requested, githubToken);
+    return resolveLatestFromGitHub(githubToken);
 }
 async function installEpinio(resolvedVersion) {
     const cached = tc.find(TOOL_NAME, resolvedVersion, arch());

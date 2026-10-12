@@ -75,10 +75,7 @@ function githubHeaders(githubToken: string): Record<string, string> {
   return headers;
 }
 
-async function resolveFromGitHub(
-  versionInput: string,
-  githubToken: string,
-): Promise<string> {
+async function resolveLatestFromGitHub(githubToken: string): Promise<string> {
   const client = new http.HttpClient("setup-epinio-action");
   const url = `${RELEASES_API}/latest`;
 
@@ -88,7 +85,7 @@ async function resolveFromGitHub(
   );
   if (res.statusCode !== 200 || !res.result?.tag_name) {
     throw new Error(
-      `Failed to resolve Epinio release '${versionInput}' (HTTP ${res.statusCode})`,
+      `Failed to resolve the latest Epinio release (HTTP ${res.statusCode})`,
     );
   }
   return stripV(res.result.tag_name);
@@ -135,7 +132,7 @@ async function resolveVersion(
     return stripV(requested);
   }
 
-  return resolveFromGitHub(requested, githubToken);
+  return resolveLatestFromGitHub(githubToken);
 }
 
 async function installEpinio(resolvedVersion: string): Promise<string> {
