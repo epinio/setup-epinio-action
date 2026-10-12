@@ -34431,6 +34431,12 @@ exports.buildLoginArgs = buildLoginArgs;
 const fs = __importStar(__nccwpck_require__(3024));
 const os = __importStar(__nccwpck_require__(8161));
 const path = __importStar(__nccwpck_require__(6760));
+/**
+ * Path used for hand-written token settings. Prefer an existing EPINIO_SETTINGS
+ * override; otherwise use a stable runner-local path. Callers must export this
+ * path via EPINIO_SETTINGS so the Epinio CLI finds it on macOS/Windows too
+ * (those platforms use different XDG-style defaults than Linux).
+ */
 function settingsPath() {
     const override = process.env.EPINIO_SETTINGS;
     if (override) {
@@ -34533,7 +34539,9 @@ const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
 const http = __importStar(__nccwpck_require__(4844));
 const tc = __importStar(__nccwpck_require__(3472));
+const crypto = __importStar(__nccwpck_require__(7598));
 const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
 const path = __importStar(__nccwpck_require__(6760));
 const auth_1 = __nccwpck_require__(9081);
 const version_1 = __nccwpck_require__(311);
@@ -34574,23 +34582,20 @@ function assetName(osName, cpu) {
     }
     return `epinio-${osName}-${cpu}`;
 }
-function githubHeaders() {
+function githubHeaders(githubToken) {
     const headers = {
         Accept: "application/vnd.github+json",
         "User-Agent": "setup-epinio-action",
     };
-    const token = process.env.GITHUB_TOKEN;
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
+    if (githubToken) {
+        headers.Authorization = `Bearer ${githubToken}`;
     }
     return headers;
 }
-async function resolveFromGitHub(versionInput) {
+async function resolveFromGitHub(versionInput, githubToken) {
     const client = new http.HttpClient("setup-epinio-action");
-    const url = versionInput === "latest"
-        ? `${RELEASES_API}/latest`
-        : `${RELEASES_API}/tags/${(0, version_1.withV)(versionInput)}`;
-    const res = await client.getJson(url, githubHeaders());
+    const url = `${RELEASES_API}/latest`;
+    const res = await client.getJson(url, githubHeaders(githubToken));
     if (res.statusCode !== 200 || !res.result?.tag_name) {
         throw new Error(`Failed to resolve Epinio release '${versionInput}' (HTTP ${res.statusCode})`);
     }
@@ -34611,15 +34616,20 @@ async function resolveFromServer(url, trustCA) {
     }
     return resolved;
 }
-async function resolveVersion(versionInput, url, trustCA) {
+async function resolveVersion(versionInput, url, trustCA, githubToken) {
     const requested = versionInput.trim() || "latest";
+    (0, version_1.assertValidVersionInput)(requested);
     if (requested === "server") {
         if (!url) {
             throw new Error('version "server" requires the url input');
         }
         return resolveFromServer(url, trustCA);
     }
-    return resolveFromGitHub(requested);
+    // Pinned semver: build the download URL directly (no GitHub API call).
+    if ((0, version_1.isPinnedSemver)(requested)) {
+        return (0, version_1.stripV)(requested);
+    }
+    return resolveFromGitHub(requested, githubToken);
 }
 async function installEpinio(resolvedVersion) {
     const cached = tc.find(TOOL_NAME, resolvedVersion, arch());
@@ -34632,12 +34642,16 @@ async function installEpinio(resolvedVersion) {
     const name = assetName(osName, cpu);
     const downloadUrl = `https://github.com/epinio/epinio/releases/download/${(0, version_1.withV)(resolvedVersion)}/${name}`;
     core.info(`Downloading ${downloadUrl}`);
-    const downloaded = await tc.downloadTool(downloadUrl);
     let binDir;
     if (osName === "windows") {
+        // PowerShell Expand-Archive (used by tool-cache on Windows) requires a
+        // .zip extension; downloadTool's default dest is an extensionless UUID.
+        const zipPath = path.join(process.env.RUNNER_TEMP || os.tmpdir(), `epinio-${resolvedVersion}-${crypto.randomUUID()}.zip`);
+        const downloaded = await tc.downloadTool(downloadUrl, zipPath);
         binDir = await tc.extractZip(downloaded);
     }
     else {
+        const downloaded = await tc.downloadTool(downloadUrl);
         binDir = path.join(path.dirname(downloaded), `epinio-${resolvedVersion}`);
         fs.mkdirSync(binDir, { recursive: true });
         const dest = path.join(binDir, "epinio");
@@ -34654,6 +34668,9 @@ async function authenticate(input) {
     }
     if (input.token) {
         const file = (0, auth_1.writeTokenSettings)(input.url, input.token, input.namespace);
+        // Epinio on macOS/Windows does not use ~/.config by default; export so the
+        // CLI (and later workflow steps) read the file we wrote.
+        core.exportVariable("EPINIO_SETTINGS", file);
         core.info(`Wrote Epinio settings with token auth to ${file}`);
         return;
     }
@@ -34681,6 +34698,7 @@ async function authenticate(input) {
 }
 async function run() {
     const versionInput = core.getInput("version") || "latest";
+    const githubToken = core.getInput("github-token");
     const auth = {
         url: core.getInput("url"),
         token: core.getInput("token"),
@@ -34689,7 +34707,13 @@ async function run() {
         namespace: core.getInput("namespace"),
         trustCA: core.getBooleanInput("trust-ca"),
     };
-    const resolvedVersion = await resolveVersion(versionInput, auth.url, auth.trustCA);
+    if (auth.token) {
+        core.setSecret(auth.token);
+    }
+    if (auth.password) {
+        core.setSecret(auth.password);
+    }
+    const resolvedVersion = await resolveVersion(versionInput, auth.url, auth.trustCA, githubToken);
     const toolPath = await installEpinio(resolvedVersion);
     core.addPath(toolPath);
     core.setOutput("version", resolvedVersion);
@@ -34711,6 +34735,8 @@ run().catch((error) => {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.stripV = stripV;
 exports.withV = withV;
+exports.isPinnedSemver = isPinnedSemver;
+exports.assertValidVersionInput = assertValidVersionInput;
 exports.releaseVersionFromServer = releaseVersionFromServer;
 function stripV(version) {
     return version.replace(/^v/i, "");
@@ -34718,6 +34744,32 @@ function stripV(version) {
 function withV(version) {
     const normalized = stripV(version);
     return normalized ? `v${normalized}` : version;
+}
+/** True for a concrete release like 1.14.2 / v1.14.2 (optional pre-release suffix). */
+function isPinnedSemver(version) {
+    const v = version.trim();
+    // Reject git-describe strings (e.g. 1.14.2-9-g47d18eadd); those are not release tags.
+    if (/-\d+-g[0-9a-f]+/i.test(stripV(v))) {
+        return false;
+    }
+    return /^v?\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/i.test(v);
+}
+/**
+ * Accept only latest, server, or a pinned semver. Rejects path traversal and
+ * other unsafe values that could be interpolated into download URLs.
+ */
+function assertValidVersionInput(version) {
+    const requested = version.trim();
+    if (!requested) {
+        throw new Error('version is empty; use "latest", "server", or a semver like 1.14.2');
+    }
+    if (requested === "latest" || requested === "server") {
+        return;
+    }
+    if (isPinnedSemver(requested)) {
+        return;
+    }
+    throw new Error(`Invalid version "${version}". Use "latest", "server", or a semver like 1.14.2 / v1.14.2`);
 }
 /**
  * Map a server-reported version to a release version. Servers built from git

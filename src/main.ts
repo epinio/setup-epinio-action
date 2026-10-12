@@ -2,7 +2,9 @@ import * as core from "@actions/core";
 import * as exec from "@actions/exec";
 import * as http from "@actions/http-client";
 import * as tc from "@actions/tool-cache";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   buildLoginArgs,
@@ -10,7 +12,13 @@ import {
   writeTokenSettings,
   type AuthInputs,
 } from "./auth";
-import { releaseVersionFromServer, stripV, withV } from "./version";
+import {
+  assertValidVersionInput,
+  isPinnedSemver,
+  releaseVersionFromServer,
+  stripV,
+  withV,
+} from "./version";
 
 const TOOL_NAME = "epinio";
 const RELEASES_API = "https://api.github.com/repos/epinio/epinio/releases";
@@ -56,26 +64,28 @@ function assetName(osName: Platform, cpu: Arch): string {
   return `epinio-${osName}-${cpu}`;
 }
 
-function githubHeaders(): Record<string, string> {
+function githubHeaders(githubToken: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "setup-epinio-action",
   };
-  const token = process.env.GITHUB_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  if (githubToken) {
+    headers.Authorization = `Bearer ${githubToken}`;
   }
   return headers;
 }
 
-async function resolveFromGitHub(versionInput: string): Promise<string> {
+async function resolveFromGitHub(
+  versionInput: string,
+  githubToken: string,
+): Promise<string> {
   const client = new http.HttpClient("setup-epinio-action");
-  const url =
-    versionInput === "latest"
-      ? `${RELEASES_API}/latest`
-      : `${RELEASES_API}/tags/${withV(versionInput)}`;
+  const url = `${RELEASES_API}/latest`;
 
-  const res = await client.getJson<{ tag_name: string }>(url, githubHeaders());
+  const res = await client.getJson<{ tag_name: string }>(
+    url,
+    githubHeaders(githubToken),
+  );
   if (res.statusCode !== 200 || !res.result?.tag_name) {
     throw new Error(
       `Failed to resolve Epinio release '${versionInput}' (HTTP ${res.statusCode})`,
@@ -108,15 +118,24 @@ async function resolveVersion(
   versionInput: string,
   url: string,
   trustCA: boolean,
+  githubToken: string,
 ): Promise<string> {
   const requested = versionInput.trim() || "latest";
+  assertValidVersionInput(requested);
+
   if (requested === "server") {
     if (!url) {
       throw new Error('version "server" requires the url input');
     }
     return resolveFromServer(url, trustCA);
   }
-  return resolveFromGitHub(requested);
+
+  // Pinned semver: build the download URL directly (no GitHub API call).
+  if (isPinnedSemver(requested)) {
+    return stripV(requested);
+  }
+
+  return resolveFromGitHub(requested, githubToken);
 }
 
 async function installEpinio(resolvedVersion: string): Promise<string> {
@@ -132,12 +151,19 @@ async function installEpinio(resolvedVersion: string): Promise<string> {
   const downloadUrl = `https://github.com/epinio/epinio/releases/download/${withV(resolvedVersion)}/${name}`;
   core.info(`Downloading ${downloadUrl}`);
 
-  const downloaded = await tc.downloadTool(downloadUrl);
   let binDir: string;
 
   if (osName === "windows") {
+    // PowerShell Expand-Archive (used by tool-cache on Windows) requires a
+    // .zip extension; downloadTool's default dest is an extensionless UUID.
+    const zipPath = path.join(
+      process.env.RUNNER_TEMP || os.tmpdir(),
+      `epinio-${resolvedVersion}-${crypto.randomUUID()}.zip`,
+    );
+    const downloaded = await tc.downloadTool(downloadUrl, zipPath);
     binDir = await tc.extractZip(downloaded);
   } else {
+    const downloaded = await tc.downloadTool(downloadUrl);
     binDir = path.join(path.dirname(downloaded), `epinio-${resolvedVersion}`);
     fs.mkdirSync(binDir, { recursive: true });
     const dest = path.join(binDir, "epinio");
@@ -157,6 +183,9 @@ async function authenticate(input: AuthInputs): Promise<void> {
 
   if (input.token) {
     const file = writeTokenSettings(input.url, input.token, input.namespace);
+    // Epinio on macOS/Windows does not use ~/.config by default; export so the
+    // CLI (and later workflow steps) read the file we wrote.
+    core.exportVariable("EPINIO_SETTINGS", file);
     core.info(`Wrote Epinio settings with token auth to ${file}`);
     return;
   }
@@ -187,6 +216,7 @@ async function authenticate(input: AuthInputs): Promise<void> {
 
 async function run(): Promise<void> {
   const versionInput = core.getInput("version") || "latest";
+  const githubToken = core.getInput("github-token");
   const auth: AuthInputs = {
     url: core.getInput("url"),
     token: core.getInput("token"),
@@ -196,7 +226,19 @@ async function run(): Promise<void> {
     trustCA: core.getBooleanInput("trust-ca"),
   };
 
-  const resolvedVersion = await resolveVersion(versionInput, auth.url, auth.trustCA);
+  if (auth.token) {
+    core.setSecret(auth.token);
+  }
+  if (auth.password) {
+    core.setSecret(auth.password);
+  }
+
+  const resolvedVersion = await resolveVersion(
+    versionInput,
+    auth.url,
+    auth.trustCA,
+    githubToken,
+  );
   const toolPath = await installEpinio(resolvedVersion);
   core.addPath(toolPath);
   core.setOutput("version", resolvedVersion);

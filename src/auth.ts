@@ -11,6 +11,12 @@ export type AuthInputs = {
   trustCA: boolean;
 };
 
+/**
+ * Path used for hand-written token settings. Prefer an existing EPINIO_SETTINGS
+ * override; otherwise use a stable runner-local path. Callers must export this
+ * path via EPINIO_SETTINGS so the Epinio CLI finds it on macOS/Windows too
+ * (those platforms use different XDG-style defaults than Linux).
+ */
 export function settingsPath(): string {
   const override = process.env.EPINIO_SETTINGS;
   if (override) {

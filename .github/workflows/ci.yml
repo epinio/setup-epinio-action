@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -38,8 +41,6 @@ jobs:
         uses: ./
         with:
           version: latest
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Verify CLI
         shell: bash
@@ -49,28 +50,50 @@ jobs:
           test -n "${{ steps.setup.outputs.version }}"
           echo "resolved=${{ steps.setup.outputs.version }}"
 
-  token-auth:
+  pinned-version:
     needs: build
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pinned Epinio
+        id: setup
+        uses: ./
+        with:
+          version: "1.14.2"
+
+      - name: Verify pinned version
+        run: |
+          set -euo pipefail
+          test "${{ steps.setup.outputs.version }}" = "1.14.2"
+          epinio --version
+
+  token-auth:
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Epinio with token auth
         uses: ./
         with:
-          version: latest
+          version: "1.14.2"
           url: https://epinio.example.com
           token: ci-test-token
           namespace: workspace
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Verify settings written
+      - name: Verify settings via EPINIO_SETTINGS
+        shell: bash
         run: |
           set -euo pipefail
-          settings="$HOME/.config/epinio/settings.yaml"
-          test -f "$settings"
-          grep -F 'api: "https://epinio.example.com"' "$settings"
-          grep -F 'wss: "wss://epinio.example.com"' "$settings"
-          grep -F 'accesstoken: "ci-test-token"' "$settings"
-          grep -F 'namespace: "workspace"' "$settings"
+          test -n "${EPINIO_SETTINGS:-}"
+          test -f "$EPINIO_SETTINGS"
+          grep -F 'api: "https://epinio.example.com"' "$EPINIO_SETTINGS"
+          grep -F 'wss: "wss://epinio.example.com"' "$EPINIO_SETTINGS"
+          grep -F 'accesstoken: "ci-test-token"' "$EPINIO_SETTINGS"
+          grep -F 'namespace: "workspace"' "$EPINIO_SETTINGS"
+          # Confirm the CLI resolves the same settings file on this OS
+          epinio settings show

@@ -15,7 +15,9 @@ inputs:
     description: Epinio API URL used for login and/or version=server (e.g. https://epinio.example.com)
     required: false
   token:
-    description: Bearer access token for Epinio (alternative to user/password)
+    description: >
+      Bearer access token for Epinio (alternative to user/password).
+      Preferred over user/password in CI so the password is not passed on the CLI.
     required: false
   user:
     description: Epinio username (requires password and url)
@@ -28,9 +30,17 @@ inputs:
     required: false
   trust-ca:
     description: >
-      When true, pass --trust-ca to epinio login (user/password auth).
-      Needed for servers with a self-signed or private CA. Default is false.
+      When true, pass --trust-ca to epinio login (user/password auth only).
+      Needed for servers with a self-signed or private CA. Does not apply to
+      token auth (settings are written directly). Default is false.
     default: "false"
+    required: false
+  github-token:
+    description: >
+      GitHub token used only when resolving version=latest via the GitHub API
+      (avoids unauthenticated rate limits). Pinned semver versions do not call
+      the API.
+    default: ${{ github.token }}
     required: false
 outputs:
   version:
